@@ -34,10 +34,13 @@
   nav button.secondary, .btn.secondary{background:var(--card); color:var(--text); border:1px solid var(--line);}
   nav button.danger, .btn.danger{background:var(--accent2); color:#fff;}
   
+  /* Badge status dibuat interaktif dan clickable */
   .badge-status {
     font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 6px 12px; 
-    border-radius: 20px; letter-spacing: 1px;
+    border-radius: 20px; letter-spacing: 1px; cursor: pointer; user-select: none;
+    transition: all 0.2s ease;
   }
+  .badge-status:hover { transform: translateY(-1px); opacity: 0.85; box-shadow: 0 2px 8px rgba(255,184,0,0.1); }
   .status-admin { background: rgba(255,184,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
   .status-viewer { background: rgba(142,142,147,0.12); color: var(--muted); border: 1px solid var(--line); }
 
@@ -117,7 +120,7 @@
       </label>
       <button class="secondary admin-only" id="btnSetting" onclick="go('settings')">⚙️</button>
     </nav>
-    <div id="statusBadge" class="badge-status status-viewer">👁️ Penonton</div>
+    <div id="statusBadge" class="badge-status status-viewer" onclick="toggleAdminMode()" title="Klik untuk ubah role">👁️ Penonton</div>
   </div>
 </header>
 
@@ -128,18 +131,51 @@
 <script>
 const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyCKQ6Sai2qbn77CS5JtRVnr9-C6OMq_dUAZI-OnIJgqwOoKERRPovaqjwaItbWab7X/exec';
 const SCRIPT_URL_KEY = 'sp_script_url';
-const CACHE_DATA_KEY = 'sp_cached_shoes_data'; // Key localstorage baru
+const CACHE_DATA_KEY = 'sp_cached_shoes_data';
 
 let cachedData = null;
 
-// Deteksi Admin
+// Ubah jadi variabel biasa agar status admin bisa dirubah-rubah langsung lewat klik
 const urlParams = new URLSearchParams(window.location.search);
-const isAdmin = urlParams.get('admin') === 'true';
+let isAdmin = urlParams.get('admin') === 'true';
 
-if (isAdmin) {
-  const style = document.createElement('style');
-  style.innerHTML = '.admin-only { display: inline-flex !important; }';
-  document.head.appendChild(style);
+// Fungsi menyuntikkan atau menghapus CSS admin secara dinamis
+function applyAdminStyles() {
+  let styleEl = document.getElementById('admin-style-override');
+  if (isAdmin) {
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'admin-style-override';
+      styleEl.innerHTML = '.admin-only { display: inline-flex !important; }';
+      document.head.appendChild(styleEl);
+    }
+  } else {
+    if (styleEl) styleEl.remove();
+  }
+}
+
+// Eksekusi style admin pertama kali saat web dibuka
+applyAdminStyles();
+
+// FUNGSI UTAMA UNTUK SAKLAR KLIK ADMIN <-> PENONTON
+function toggleAdminMode() {
+  isAdmin = !isAdmin;
+  
+  // Update parameter URL tanpa memicu reload halaman (Biar keren & mulus)
+  const url = new URL(window.location.href);
+  if (isAdmin) {
+    url.searchParams.set('admin', 'true');
+  } else {
+    url.searchParams.delete('admin');
+  }
+  window.history.pushState({}, '', url);
+  
+  // Terapkan perubahan UI secara langsung
+  applyAdminStyles();
+  updateBadge();
+  
+  // Muat ulang konten halaman aktif agar hak akses tombol langsung sinkron
+  handleHash();
 }
 
 function updateBadge() {
@@ -181,20 +217,16 @@ async function apiPost(payload){
   return json;
 }
 
-// STRATEGI FAST LOADING: TAMPILKAN CACHE DULU, FETCH BELAKANGAN
 async function getData(forceRefresh){
   if(cachedData && !forceRefresh) return cachedData;
   
-  // Ambil data yang tersimpan di browser terlebih dahulu (Instan!)
   const localCache = localStorage.getItem(CACHE_DATA_KEY);
   if(localCache && !forceRefresh) {
     cachedData = JSON.parse(localCache);
-    // Jalankan fetch di background secara silent untuk memperbarui cache tanpa bikin nunggu
     fetchAndUpdateCache();
     return cachedData;
   }
   
-  // Jika cache kosong total, baru terpaksa nunggu fetch utama
   return await fetchAndUpdateCache();
 }
 
@@ -204,7 +236,6 @@ async function fetchAndUpdateCache() {
     cachedData = data;
     localStorage.setItem(CACHE_DATA_KEY, JSON.stringify(data));
     
-    // Jika user sedang berada di halaman 'list', re-render otomatis biar dapet data paling fresh
     const hash = location.hash.slice(1);
     if(!hash || hash === 'list') {
       const app = document.getElementById('app');
@@ -212,7 +243,7 @@ async function fetchAndUpdateCache() {
     }
     return data;
   } catch(e) {
-    console.error("Gagal refresh data dari server:", e);
+    console.error("Gagal refresh data:", e);
     if(cachedData) return cachedData;
     throw e;
   }
@@ -236,7 +267,6 @@ async function route(view, id){
     return;
   }
 
-  // Cek apakah sudah ada data di cache browser
   const hasCache = localStorage.getItem(CACHE_DATA_KEY);
   if(!hasCache) {
     app.innerHTML = '<div class="empty">⏳ Memuat database bedah sepatu untuk pertama kali...</div>';
@@ -342,7 +372,6 @@ let selectedIds = new Set();
 function toggleSelect(id){
   if(selectedIds.has(id)) selectedIds.delete(id);
   else selectedIds.add(id);
-  // Re-render instant dari data cache local
   const app = document.getElementById('app');
   if(app && cachedData) app.innerHTML = renderList(cachedData);
 }
@@ -452,7 +481,7 @@ async function saveForm(e, id){
   try{
     await apiPost({ action: id ? 'update' : 'create', item: newItem });
     cachedData = null;
-    localStorage.removeItem(CACHE_DATA_KEY); // Hapus cache lama biar ke-refresh otomatis
+    localStorage.removeItem(CACHE_DATA_KEY);
     await getData(true);
     go('detail', newItem.id);
   } catch(err){
