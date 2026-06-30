@@ -43,6 +43,24 @@
     padding:2px 8px; border-radius:20px; font-size:11px; color:var(--accent); margin-top:6px;
   }
   .empty{color:var(--muted); text-align:center; padding:60px 20px;}
+  .card{position:relative;}
+  .card .ck{
+    position:absolute; top:10px; right:10px; width:20px; height:20px; z-index:2; cursor:pointer;
+  }
+  .compare-bar{
+    position:fixed; bottom:0; left:0; right:0; background:var(--bg2); border-top:1px solid var(--accent);
+    padding:12px 20px; display:flex; align-items:center; justify-content:center; gap:14px; z-index:20;
+  }
+  table.compare-table{width:100%; border-collapse:collapse; font-size:13px;}
+  table.compare-table th, table.compare-table td{
+    border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top;
+  }
+  table.compare-table th{background:var(--bg2); color:var(--accent); position:sticky; top:60px;}
+  table.compare-table td.label-col, table.compare-table th.label-col{
+    background:var(--card); color:var(--muted); font-weight:600; white-space:nowrap; position:sticky; left:0;
+  }
+  table.compare-table tr.section-row td{background:var(--bg2); color:var(--accent); font-weight:700; font-size:12px; letter-spacing:0.5px; text-transform:uppercase;}
+  .table-scroll{overflow-x:auto; padding-bottom:80px;}
   form{display:flex; flex-direction:column; gap:14px;}
   fieldset{border:1px solid var(--line); border-radius:var(--radius); padding:16px; background:var(--card);}
   legend{padding:0 8px; font-weight:700; color:var(--accent); font-size:15px;}
@@ -156,6 +174,12 @@ async function route(view, id){
     if(view === 'list') app.innerHTML = renderList(await getData());
     else if(view === 'form') app.innerHTML = renderForm(id, id ? (await getData()).find(d=>d.id===id) : null);
     else if(view === 'detail') app.innerHTML = renderDetail((await getData()).find(d=>d.id===id), id);
+    else if(view === 'compare'){
+      const ids = id.split(',');
+      const all = await getData();
+      const items = ids.map(i => all.find(d=>d.id===i)).filter(Boolean);
+      app.innerHTML = renderCompare(items);
+    }
     else if(view === 'settings') app.innerHTML = renderSettings();
   } catch(err){
     app.innerHTML = `<div class="empty">
@@ -207,6 +231,7 @@ function handleHash(){
   const hash = location.hash.slice(1);
   if(hash.startsWith('detail/')) route('detail', hash.split('/')[1]);
   else if(hash.startsWith('edit/')) route('form', hash.split('/')[1]);
+  else if(hash.startsWith('compare/')) route('compare', decodeURIComponent(hash.split('/')[1]));
   else if(hash === 'form') route('form');
   else if(hash === 'settings') route('settings');
   else route('list');
@@ -218,6 +243,7 @@ function go(view, id){
   if(view==='detail') location.hash = 'detail/' + id;
   else if(view==='form' && id) location.hash = 'edit/' + id;
   else if(view==='form') location.hash = 'form';
+  else if(view==='compare') location.hash = 'compare/' + encodeURIComponent(id);
   else if(view==='settings') location.hash = 'settings';
   else location.hash = '';
 }
@@ -235,13 +261,37 @@ function renderList(data){
   }
   const cards = data.map(d => `
     <div class="card" onclick="go('detail','${d.id}')">
+      <input type="checkbox" class="ck" data-id="${d.id}"
+        ${selectedIds.has(d.id) ? 'checked' : ''}
+        onclick="event.stopPropagation(); toggleSelect('${d.id}')">
       <h3>${esc(d.identify.brand)} ${esc(d.identify.model)}</h3>
       <p>Size: ${esc(d.identify.size) || '-'}</p>
       <p>Type: ${esc(d.identify.shoeType) || '-'}</p>
       <span class="tag">${esc(d.identify.shoeType) || 'Unknown'}</span>
     </div>
   `).join('');
-  return `<div class="grid">${cards}</div>`;
+  const bar = selectedIds.size >= 2 ? `
+    <div class="compare-bar">
+      <span>${selectedIds.size} sepatu dipilih</span>
+      <button class="btn" onclick="go('compare', Array.from(selectedIds).join(','))">⚖️ Compare</button>
+      <button class="btn secondary" onclick="clearSelect()">Batal</button>
+    </div>` : (selectedIds.size === 1 ? `
+    <div class="compare-bar">
+      <span>Pilih minimal 1 sepatu lagi buat compare</span>
+      <button class="btn secondary" onclick="clearSelect()">Batal</button>
+    </div>` : '');
+  return `<div class="grid">${cards}</div>${bar}`;
+}
+
+let selectedIds = new Set();
+function toggleSelect(id){
+  if(selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  route('list');
+}
+function clearSelect(){
+  selectedIds.clear();
+  route('list');
 }
 
 // ---------------- FORM ----------------
@@ -413,6 +463,62 @@ function renderDetail(d, id){
     </div>
   </div>
   `;
+}
+
+// ---------------- COMPARE ----------------
+function renderCompare(items){
+  if(items.length < 2){
+    return `<div class="empty"><h2>Pilih minimal 2 sepatu buat compare.</h2><button class="btn" onclick="go('list')">Balik ke List</button></div>`;
+  }
+
+  const abCell = (obj) => {
+    if(!obj || !obj.rating) return '-';
+    return `<span class="badge-rating badge-${obj.rating}">${obj.rating}</span>${obj.note ? ' — ' + esc(obj.note) : ''}`;
+  };
+
+  const headerCols = items.map(d => `<th>${esc(d.identify.brand)}<br>${esc(d.identify.model)}</th>`).join('');
+
+  const rows = [
+    { section: 'Identify' },
+    { label: 'Brand', get: d => esc(d.identify.brand) },
+    { label: 'Model', get: d => esc(d.identify.model) },
+    { label: 'Size', get: d => esc(d.identify.size) || '-' },
+    { label: 'Shoe Type', get: d => esc(d.identify.shoeType) || '-' },
+    { section: 'Upper Material' },
+    { label: 'Toe box', get: d => esc(d.upper.toebox) || '-' },
+    { label: 'Vamp', get: d => esc(d.upper.vamp) || '-' },
+    { label: 'Quarter', get: d => esc(d.upper.quarter) || '-' },
+    { label: 'Tongue', get: d => esc(d.upper.tongue) || '-' },
+    { label: 'Lining', get: d => esc(d.upper.lining) || '-' },
+    { label: 'Reinforcement', get: d => esc(d.upper.reinforcement) || '-' },
+    { label: 'Gusseted?', get: d => esc(d.upper.gusseted) || '-' },
+    { label: 'Padding', get: d => esc(d.upper.padding) || '-' },
+    { label: 'Upper Thickness', get: d => esc(d.upper.thickness) || '-' },
+    { section: 'Abrasion Test' },
+    { label: 'Upper Material 1', get: d => abCell(d.upper.abrasion && d.upper.abrasion.material1) },
+    { label: 'Upper Material 2', get: d => abCell(d.upper.abrasion && d.upper.abrasion.material2) },
+    { label: 'Upper Material 3', get: d => abCell(d.upper.abrasion && d.upper.abrasion.material3) },
+    { label: 'Lining', get: d => abCell(d.upper.abrasion && d.upper.abrasion.lining) },
+  ];
+
+  const bodyRows = rows.map(r => {
+    if(r.section){
+      return `<tr class="section-row"><td class="label-col">${r.section}</td>${items.map(()=>'<td></td>').join('')}</tr>`;
+    }
+    return `<tr><td class="label-col">${r.label}</td>${items.map(d => `<td>${r.get(d)}</td>`).join('')}</tr>`;
+  }).join('');
+
+  return `
+  <div class="actions" style="justify-content:space-between; margin-bottom:16px;">
+    <button class="btn secondary" onclick="go('list')">← Balik</button>
+    <h2 style="margin:0; font-size:16px;">⚖️ Compare ${items.length} Sepatu</h2>
+  </div>
+  <div class="table-scroll">
+    <table class="compare-table">
+      <thead><tr><th class="label-col">Field</th>${headerCols}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  </div>`;
 }
 
 async function deleteItem(id){
